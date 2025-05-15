@@ -1,0 +1,85 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SistemaRestaurante.Data;
+using SistemaRestaurante.DTOs;
+using SistemaRestaurante.Models;
+using System.Security.Claims;
+
+namespace SistemaRestaurante.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class ReservaController : ControllerBase
+{
+    private readonly RestauranteContext _context;
+
+    public ReservaController(RestauranteContext context)
+    {
+        _context = context;
+    }
+
+    [HttpPost]
+    [Authorize]
+    public async Task<ActionResult<ReservaRespostaDTO>> CriarReserva([FromBody] ReservaCriacaoDTO dto)
+    {
+        // 1. Validar mesa existe
+        var mesa = await _context.Mesas.FirstOrDefaultAsync(m => m.Id == dto.MesaId);
+        if (mesa == null)
+            return BadRequest("Mesa não encontrada.");
+
+        // 2. Validar status da mesa
+        if (mesa.Status != "disponível")
+            return BadRequest("Mesa não está disponível.");
+
+        // 3. Validar capacidade
+        if (dto.QuantidadePessoas > mesa.Capacidade)
+            return BadRequest("Quantidade de pessoas excede a capacidade da mesa.");
+
+        // 4. Validar data futura
+        if (dto.DataReserva <= DateTime.Now)
+            return BadRequest("A reserva deve ser para uma data/hora futura.");
+
+        // 5. Validar conflito de reserva para a mesma mesa e horário
+        bool conflito = await _context.Reservas.AnyAsync(r =>
+            r.MesaId == dto.MesaId &&
+            r.DataReserva == dto.DataReserva &&
+            r.Status == "ativo"
+        );
+        if (conflito)
+            return BadRequest("Já existe uma reserva ativa para essa mesa neste horário.");
+
+        // 6. Obter id do usuário autenticado
+        var usuarioId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier));
+
+        // 7. Criar reserva
+        var reserva = new Reserva
+        {
+            MesaId = dto.MesaId,
+            UsuarioId = usuarioId,
+            DataReserva = dto.DataReserva,
+            QuantidadePessoas = dto.QuantidadePessoas,
+            Status = "ativo"
+        };
+
+        _context.Reservas.Add(reserva);
+
+        // 8. Atualizar status da mesa para 'reservada'
+        mesa.Status = "reservada";
+
+        await _context.SaveChangesAsync();
+
+        // 9. Retorno
+        var resposta = new ReservaRespostaDTO
+        {
+            Id = reserva.Id,
+            MesaId = reserva.MesaId,
+            UsuarioId = reserva.UsuarioId,
+            DataReserva = reserva.DataReserva,
+            QuantidadePessoas = reserva.QuantidadePessoas,
+            Status = reserva.Status
+        };
+
+        return CreatedAtAction(nameof(CriarReserva), new { id = reserva.Id }, resposta);
+    }
+}

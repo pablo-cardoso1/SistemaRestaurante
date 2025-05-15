@@ -1,0 +1,6 @@
+namespace SistemaRestaurante.DTOs;
+
+public class ReservaRespostaDTO
+{
+    
+}
